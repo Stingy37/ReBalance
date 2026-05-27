@@ -32,15 +32,24 @@
 
 ## 📚 TABLE OF CONTENTS
 
-1. [Why ReBalance](#-why-rebalance)
-2. [Motivation](#-motivation)
-3. [Method](#-method)
-4. [Interactive Demo](#-interactive-demo)
-5. [News](#-news)
+1. [News](#-news)
+2. [Why ReBalance](#-why-rebalance)
+3. [Motivation](#-motivation)
+4. [Method](#-method)
+5. [Interactive Demo](#-interactive-demo)
 6. [TODO](#-todo)
 7. [Quick Start](#-quick-start)
 8. [Acknowledgements](#️-acknowledgements)
 9. [Citation](#-citation)
+
+## 🎉 News
+
+* **[2026.05.04]**  We release the code and steering vectors for **Qwen3-14B**. Please enjoy~
+* **[2026.03.19]**  We release an [**interactive online demo**](https://rebalance-ai.github.io/#simulator) to intuitively showcase how our dynamic control function adjusts steering weights based on real-time model reasoning states. Try it out!
+* **[2026.03.19]**  Our paper ranks [**#1 Paper of the Day**](https://huggingface.co/papers/2603.12372) on Hugging Face Daily Papers.
+* **[2026.03.12]**  We release the code and steering vectors for **DeepSeek-R1-Distill-Qwen** (1.5B, 7B), **QwQ-32B**, and [**openPangu-Embedded-7B-V1.1**](https://github.com/yu-lin-li/ReBalance/tree/openPangu). Happy coding!
+* **[2026.01.26]**  Our paper has been accepted by **ICLR 2026**🎖️, with a **7.0** initial average rating (top **0.8%** in [Paper Copilot statistics](https://papercopilot.com/statistics/iclr-statistics/iclr-2026-statistics/)) and a **10/10** review (confidence **5/5**).
+* **[2025.10.30]**  ReBalance is honored with the **HUAWEI Spark Award** 🥇.
 
 ## 🏆 Why ReBalance
 
@@ -80,13 +89,6 @@
 The fitted **model behavior-based dynamic control function** is visualized as a 3D surface above. As confidence signals evolve, the control function adaptively adjusts steering weight, which in turn shifts the model between overthinking mitigation and underthinking prevention.
 
 We warmly welcome you to try our [interactive demo](https://rebalance-ai.github.io/#simulator), where you can manipulate different confidence signals and directly observe how the control function's steering behavior changes and finally affects the model's reasoning state.
-
-## 🎉 News
-
-* **[2026.05.04]**  We release the code and steering vectors for **Qwen3-14B**. Please enjoy~
-* **[2026.03.19]**  We release an [interactive demo](https://rebalance-ai.github.io/#simulator) to intuitively showcase how our dynamic control function adjusts steering weights based on real-time model reasoning states. Try it out!
-* **[2026.03.12]**  We release the code and steering vectors for **DeepSeek-R1-Distill-Qwen** (1.5B, 7B), **QwQ-32B**, and [**openPangu-Embedded-7B-V1.1**](https://github.com/yu-lin-li/ReBalance/tree/openPangu). Happy coding!
-* **[2026.01.26]**  Our paper has been accepted by **ICLR 2026**🎖️.
 
 ## 🔥 TODO
 
