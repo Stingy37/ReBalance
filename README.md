@@ -1,4 +1,8 @@
-# Efficient Reasoning with Balanced Thinking
+<p align="center">
+  <img src="assets/banner.png" alt="Banner" width="100%" />
+</p>
+
+<h1 align="center">Efficient Reasoning with Balanced Thinking</h1>
 
 <div align="center">
 <a href="https://scholar.google.com/citations?user=dQssXVsAAAAJ&hl=en">Yulin Li</a><sup>1†</sup>,&nbsp;
