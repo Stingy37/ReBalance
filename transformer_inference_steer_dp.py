@@ -119,6 +119,38 @@ def load_existing_indices(shard_file):
     return existing_idx, existing_q
 
 
+def is_commonsense_dataset(dataset_name):
+    normalized = dataset_name.lower()
+    return (
+        "commonsense" in normalized
+        or "strategyqa" in normalized
+    )
+
+
+def build_messages(args, question_text):
+    if is_commonsense_dataset(args.dataset):
+        return [
+            {
+                "role": "system",
+                "content": (
+                    "You answer binary commonsense questions. "
+                    "Think step by step briefly, then output your final answer EXACTLY as a single LaTeX box on its own final line: "
+                    "\\boxed{Yes} or \\boxed{No}. "
+                    "Only these two are allowed; do not put anything else inside the box or print additional boxes."
+                ),
+            },
+            {
+                "role": "user",
+                "content": question_text + "\n\nAnswer with \\boxed{Yes} or \\boxed{No} only.",
+            },
+        ]
+
+    return [
+        {"role": "system", "content": "Please reason step by step, and put your final answer within \\boxed{}."},
+        {"role": "user", "content": question_text},
+    ]
+
+
 @torch.no_grad()
 def top_p_sampling_step(last_logits, temperature: float, top_p: float):
     if temperature <= 0:
@@ -294,10 +326,7 @@ def worker(rank, world_size, args):
 
         model.start_new_round()
 
-        messages = [
-            {"role": "system", "content": "Please reason step by step, and put your final answer within \\boxed{}."},
-            {"role": "user", "content": q.get("problem", "")},
-        ]
+        messages = build_messages(args, q.get("problem", ""))
         prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
