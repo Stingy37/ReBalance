@@ -48,6 +48,7 @@
 
 ## 🎉 News
 
+* **[2026.05.30]** We add support for [coding tasks](transformer_inference_steer_dp_code.py) with one-command inference and code evaluation.
 * **[2026.05.04]**  We release the code and steering vectors for **Qwen3-14B**. Please enjoy~
 * **[2026.03.19]**  We release an [**interactive online demo**](https://rebalance-ai.github.io/#simulator) to intuitively showcase how our dynamic control function adjusts steering weights based on real-time model reasoning states. Try it out!
 * **[2026.03.19]**  Our paper ranks [**#1 Paper of the Day**](https://huggingface.co/papers/2603.12372) on Hugging Face Daily Papers.
@@ -147,7 +148,8 @@ ReBalance/
 
 **Step 2. Inference with dynamic steering**
 
-For Qwen3 models, use `transformer_inference_steer_dp_qwen3.py` instead.
+For Qwen3 models, use [`transformer_inference_steer_dp_qwen3.py`](transformer_inference_steer_dp_qwen3.py) instead.
+For coding tasks, use [`transformer_inference_steer_dp_code.py`](transformer_inference_steer_dp_code.py); Step 3 and Step 4 are not needed because it automatically aggregates shard outputs and runs code evaluation.
 
 ```bash
 python transformer_inference_steer_dp.py \
@@ -225,7 +227,7 @@ python hidden_analysis_auto.py \
 
 **Step 4. Dynamic steering with your extracted vectors**
 
-For Qwen3 models, use `transformer_inference_steer_dp_qwen3.py` instead.
+For Qwen3 models, use [`transformer_inference_steer_dp_qwen3.py`](transformer_inference_steer_dp_qwen3.py) instead.
 
 ```bash
 python transformer_inference_steer_dp.py \
