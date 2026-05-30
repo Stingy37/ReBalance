@@ -2,7 +2,7 @@
 """
 Steered code-generation inference and evaluation.
 
-This script runs deterministic code generation with a Qwen2 model that supports
+This script runs sampled code generation with a Qwen2 model that supports
 activation steering, evaluates generated solutions with the project's code
 evaluation utilities, and stores both strict and relaxed evaluation metrics.
 
@@ -233,11 +233,10 @@ def configure_quiet_runtime() -> None:
 
 
 def set_seed(seed: int = 42) -> None:
-    """Set random seeds for reproducible deterministic generation.
+    """Set random seeds for reproducible sampling.
 
-    The generation path in this script uses ``do_sample=False``. The seed is
-    still useful for deterministic initialization of libraries, multiprocessing
-    behavior, and any future sampling/evaluation extension.
+    The generation path uses explicit token-by-token top-p sampling, matching
+    ``transformer_inference_steer_dp.py``.
     """
 
     random.seed(seed)
@@ -328,6 +327,37 @@ def append_jsonl(path: Path, record: Mapping[str, Any]) -> None:
 
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(record, ensure_ascii=False) + "\n")
+
+
+@torch.no_grad()
+def top_p_sampling_step(
+    last_logits: torch.Tensor,
+    temperature: float,
+    top_p: float,
+) -> Tuple[torch.Tensor, float]:
+    """Sample one token with the same top-p strategy as the math inference script."""
+
+    if temperature <= 0:
+        raise ValueError("temperature must be > 0 for sampling.")
+
+    logits = last_logits / temperature
+    probs = torch.softmax(logits, dim=-1)
+
+    sorted_probs, sorted_indices = torch.sort(probs, descending=True, dim=-1)
+    cumsum = torch.cumsum(sorted_probs, dim=-1)
+
+    cutoff = cumsum > top_p
+    cutoff[..., 0] = False
+    sorted_probs = sorted_probs.masked_fill(cutoff, 0.0)
+    sorted_probs = sorted_probs / (sorted_probs.sum(dim=-1, keepdim=True) + 1e-12)
+
+    next_sorted_idx = torch.multinomial(sorted_probs, num_samples=1)
+    next_token = sorted_indices.gather(-1, next_sorted_idx)
+
+    chosen_prob = sorted_probs.gather(-1, next_sorted_idx)
+    next_logprob = torch.log(chosen_prob + 1e-12).item()
+
+    return next_token, next_logprob
 
 
 # ---------------------------------------------------------------------------
@@ -466,19 +496,6 @@ def dataset_to_release(dataset_name: str) -> str:
     return dataset_name.split("_", 1)[1] if "_" in dataset_name else dataset_name
 
 
-def maybe_remove_bos(
-    prompt: str,
-    tokenizer: PreTrainedTokenizerBase,
-    remove_bos: bool,
-) -> str:
-    """Remove a leading BOS token from the rendered chat prompt if requested."""
-
-    if remove_bos and tokenizer.bos_token is not None and prompt.startswith(tokenizer.bos_token):
-        return prompt[len(tokenizer.bos_token) :]
-
-    return prompt
-
-
 def prepare_code_benchmark(
     args: argparse.Namespace,
     tokenizer: PreTrainedTokenizerBase,
@@ -514,7 +531,6 @@ def prepare_code_benchmark(
             tokenize=False,
             add_generation_prompt=True,
         )
-        chat_prompt = maybe_remove_bos(chat_prompt, tokenizer, args.remove_bos)
         prompts.append(chat_prompt)
 
     return benchmark, prompts
@@ -530,33 +546,100 @@ def get_worker_indices(num_examples: int, rank: int, world_size: int) -> List[in
     return [idx for idx in range(num_examples) if idx % world_size == rank]
 
 
+@torch.no_grad()
+def sample_with_tracking(
+    model: torch.nn.Module,
+    input_ids: torch.Tensor,
+    attention_mask: torch.Tensor,
+    max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    eos_token_id: int,
+    dtype: torch.dtype,
+) -> Tuple[torch.Tensor, List[float]]:
+    """Sample tokens while tracking per-step log probabilities."""
+
+    device = input_ids.device
+    token_logprobs: List[float] = []
+    generated: List[int] = []
+
+    past_key_values = None
+
+    with torch.inference_mode(), torch.cuda.amp.autocast(
+        enabled=(dtype in (torch.float16, torch.bfloat16)),
+        dtype=dtype,
+    ):
+        outputs = model(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            use_cache=True,
+            past_key_values=None,
+        )
+        past_key_values = outputs.past_key_values
+
+    last_token = None
+    for _ in range(max_new_tokens):
+        with torch.inference_mode(), torch.cuda.amp.autocast(
+            enabled=(dtype in (torch.float16, torch.bfloat16)),
+            dtype=dtype,
+        ):
+            if last_token is None:
+                logits = outputs.logits[:, -1, :]
+            else:
+                out = model(
+                    input_ids=last_token,
+                    attention_mask=None,
+                    use_cache=True,
+                    past_key_values=past_key_values,
+                )
+                past_key_values = out.past_key_values
+                logits = out.logits[:, -1, :]
+
+        next_token, next_logprob = top_p_sampling_step(logits, temperature, top_p)
+        token_logprobs.append(next_logprob)
+
+        if eos_token_id is not None and next_token.item() == eos_token_id:
+            generated.append(next_token.item())
+            break
+
+        generated.append(next_token.item())
+        last_token = next_token
+
+    if len(generated) == 0:
+        return torch.empty(0, dtype=torch.long, device=device), []
+
+    return torch.tensor(generated, dtype=torch.long, device=device), token_logprobs
+
+
 def generate_one(
     model: torch.nn.Module,
     tokenizer: PreTrainedTokenizerBase,
     prompt: str,
     device: torch.device,
     max_new_tokens: int,
+    temperature: float,
+    top_p: float,
+    dtype: torch.dtype,
 ) -> str:
-    """Generate one deterministic model response for a prompt."""
+    """Generate one model response using the shared top-p sampling path."""
 
-    encoded = tokenizer([prompt], return_tensors="pt", padding=True).to(device)
+    inputs = tokenizer(prompt, return_tensors="pt").to(device)
 
     with torch.no_grad():
-        generated = model.generate(
-            **encoded,
-            do_sample=False,
+        gen_ids, _ = sample_with_tracking(
+            model=model,
+            input_ids=inputs["input_ids"],
+            attention_mask=inputs.get("attention_mask", torch.ones_like(inputs["input_ids"])),
             max_new_tokens=max_new_tokens,
-            use_cache=True,
+            temperature=temperature,
+            top_p=top_p,
             eos_token_id=tokenizer.eos_token_id,
+            dtype=dtype,
         )
 
-    prompt_len = encoded["input_ids"].shape[1]
-    decoded = tokenizer.decode(
-        generated[0][prompt_len:],
-        skip_special_tokens=True,
-    )
+    decoded = tokenizer.decode(gen_ids, skip_special_tokens=True)
 
-    del encoded, generated
+    del inputs, gen_ids
 
     return decoded
 
@@ -634,6 +717,9 @@ def worker(rank: int, world_size: int, args: argparse.Namespace) -> None:
                 prompt=prompt,
                 device=device,
                 max_new_tokens=args.max_generated_tokens,
+                temperature=args.temperature,
+                top_p=args.top_p,
+                dtype=dtype,
             )
         except torch.cuda.OutOfMemoryError:
             print(f"[OOM][rank {rank}] skipped idx={idx}")
@@ -1067,7 +1153,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
     parser = argparse.ArgumentParser(
         description=(
-            "Run activation-steered deterministic code generation and evaluate "
+            "Run activation-steered sampled code generation and evaluate "
             "the resulting programs."
         )
     )
@@ -1081,19 +1167,14 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run_id", type=str, default="")
 
     # Generation settings.
-    parser.add_argument("--max_generated_tokens", type=int, default=2048)
+    parser.add_argument("--max_generated_tokens", type=int, default=512)
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--top_p", type=float, default=0.95)
-
-    # The original script defaulted to removing BOS. Keep that behavior for
-    # compatibility while also exposing a switch to preserve BOS if needed.
-    parser.add_argument("--remove_bos", action="store_true", default=True)
-    parser.add_argument("--keep_bos", dest="remove_bos", action="store_false")
 
     # Steering settings.
     parser.add_argument("--steer_vector_path", type=str, required=True)
     parser.add_argument("--steer_layer", type=int, default=22)
-    parser.add_argument("--steer_coef", type=float, default=0.0)
+    parser.add_argument("--steer_coef", type=float, default=1.0)
 
     # Dynamic steering hyperparameters. Leave them unspecified to use the
     # model-specific defaults in MODEL_DYN_DEFAULTS when available. Passing any
