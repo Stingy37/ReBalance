@@ -26,14 +26,21 @@ Main features
 Expected dataset naming
 -----------------------
 The script targets code-generation benchmarks whose CLI dataset name starts
-with ``Code_``. The release name passed to ``load_code_generation_dataset`` is
-the part after the first underscore. For example:
+with ``Code_``. The benchmark file is expected at:
+
+    <dataset_dir>/<dataset>/test.jsonl
+
+The release name passed to ``load_code_generation_dataset`` is the part after
+the first underscore. For example:
 
     --dataset Code_livecodebenchv2
 
 will call:
 
-    load_code_generation_dataset(release_version="livecodebenchv2")
+    load_code_generation_dataset(
+        release_version="livecodebenchv2",
+        local_path="<dataset_dir>/Code_livecodebenchv2/test.jsonl",
+    )
 
 Outputs
 -------
@@ -484,7 +491,17 @@ def prepare_code_benchmark(
     """
 
     release = dataset_to_release(args.dataset)
-    benchmark = load_code_generation_dataset(release_version=release)
+    dataset_path = Path(args.dataset_dir) / args.dataset / "test.jsonl"
+    if not dataset_path.exists():
+        raise FileNotFoundError(
+            "Code dataset file not found. Expected "
+            f"--dataset_dir/--dataset/test.jsonl, got: {dataset_path}"
+        )
+
+    benchmark = load_code_generation_dataset(
+        release_version=release,
+        local_path=str(dataset_path),
+    )
 
     prompts: List[str] = []
 

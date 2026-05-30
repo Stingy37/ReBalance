@@ -282,13 +282,18 @@ class CodeGenerationProblem:
 
 def load_code_generation_dataset(
     release_version: str = "release_v1",
-    local_path: str = "/home/tutengyao/Eff_Reasoning/Data/Code_livecodebenchv1/test.jsonl",
+    local_path: str | None = None,
 ) -> list[CodeGenerationProblem]:
     """
     Load from local JSONL files (one sample per line) with robust parsing.
     - The `release_version` argument is kept only for backward-compatibility; local loading does not use it.
-    - If you need a custom path, modify `local_path` or override it via external parameters.
+    - `local_path` must be provided by the caller, for example `<dataset_dir>/<dataset>/test.jsonl`.
     """
+    if local_path is None:
+        raise ValueError(
+            "`local_path` is required. Pass the path to a local code-generation JSONL file."
+        )
+
     ds = load_dataset("json", data_files={"test": local_path}, split="test")
     problems = [CodeGenerationProblem(**p) for p in ds]  # type: ignore
     print(f"Loaded {len(problems)} problems")
