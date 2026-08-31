@@ -37,14 +37,48 @@ from transformers.models.qwen3.modeling_qwen3 import (
     Qwen3RMSNorm,
     Qwen3RotaryEmbedding,
 )
-from transformers.masking_utils import (
-    create_causal_mask,
-    create_sliding_window_causal_mask,
-)
+try:
+    from transformers.masking_utils import (
+        create_causal_mask,
+        create_sliding_window_causal_mask,
+    )
+except ImportError:
+    # [adapter] transformers < 4.53 (llm_inter pins 4.51.2 for vllm 0.8.3) has no
+    # masking_utils; delegate to the stock 4.51.2 mask builder, which only reads
+    # .config/.training/._prepare_4d... off `self`, so a tiny duck object suffices.
+    from types import SimpleNamespace
+    from transformers.models.qwen3.modeling_qwen3 import Qwen3Model as _StockQwen3Model
+
+    def create_causal_mask(config, input_embeds, attention_mask, cache_position,
+                           past_key_values, position_ids=None, **_):
+        duck = SimpleNamespace(
+            config=config, training=False,
+            _prepare_4d_causal_attention_mask_with_cache_position=
+                _StockQwen3Model._prepare_4d_causal_attention_mask_with_cache_position,
+        )
+        return _StockQwen3Model._update_causal_mask(
+            duck, attention_mask, input_embeds, cache_position, past_key_values, False)
+
+    def create_sliding_window_causal_mask(**_):
+        raise NotImplementedError(
+            "[adapter] sliding-window fallback not ported (Qwen3-8B has sliding_window=null)")
+
+# [adapter] the decoder-layer cache kwarg was renamed past_key_value -> past_key_values in
+# transformers 4.53; passing the wrong name silently drops the KV cache on 4.51.2.
+import inspect as _inspect
+_PAST_KW = ("past_key_values"
+            if "past_key_values" in _inspect.signature(Qwen3DecoderLayer.forward).parameters
+            else "past_key_value")
 
 
 # ----------------------------- Backbone with injection hook -----------------------------
-class Qwen3PreTrainedModel(PreTrainedModel):
+# [adapter] base on the stock PreTrainedModel subclass so from_pretrained resolves a real
+# attention backend (sdpa/flash) instead of eager -- plain PreTrainedModel advertises no
+# support flags on 4.51.2.
+from transformers.models.qwen3.modeling_qwen3 import Qwen3PreTrainedModel as _StockQwen3PreTrainedModel
+
+
+class Qwen3PreTrainedModel(_StockQwen3PreTrainedModel):
     config_class = Qwen3Config
     base_model_prefix = "model"
     supports_gradient_checkpointing = True
@@ -84,7 +118,8 @@ class Qwen3Model(Qwen3PreTrainedModel):
         self.rotary_emb = Qwen3RotaryEmbedding(config=config)
 
         self.gradient_checkpointing = False
-        self.has_sliding_layers = "sliding_attention" in config.layer_types
+        # [adapter] config.layer_types only exists on transformers >= 4.53
+        self.has_sliding_layers = "sliding_attention" in getattr(config, "layer_types", ())
 
         self.post_init()
 
@@ -133,7 +168,7 @@ class Qwen3Model(Qwen3PreTrainedModel):
             inputs_embeds = self.embed_tokens(input_ids)
 
         if use_cache and past_key_values is None:
-            past_key_values = DynamicCache(config=self.config)
+            past_key_values = DynamicCache()  # [adapter] the config= kwarg needs >= 4.53
 
         if cache_position is None:
             past_seen_tokens = past_key_values.get_seq_length() if past_key_values is not None else 0
@@ -171,16 +206,19 @@ class Qwen3Model(Qwen3PreTrainedModel):
             if output_hidden_states:
                 all_hidden_states = all_hidden_states + (hidden_states,)
 
-            hidden_states = decoder_layer(
+            # [adapter] 4.51.2 layer API: no .attention_type attribute, cache kwarg named
+            # per _PAST_KW, and forward returns a tuple instead of a bare tensor
+            layer_outputs = decoder_layer(
                 hidden_states,
-                attention_mask=causal_mask_mapping[decoder_layer.attention_type],
+                attention_mask=causal_mask_mapping[getattr(decoder_layer, "attention_type", "full_attention")],
                 position_ids=position_ids,
-                past_key_values=past_key_values,
                 use_cache=use_cache,
                 cache_position=cache_position,
                 position_embeddings=position_embeddings,
+                **{_PAST_KW: past_key_values},
                 **kwargs,
             )
+            hidden_states = layer_outputs[0] if isinstance(layer_outputs, tuple) else layer_outputs
 
             # Inject right after this layer if requested
             if (steering_vector is not None) and (steering_layer is not None) and (steering_layer == li):

@@ -45,6 +45,15 @@ MODEL_DYN_HPARAMS = {
         "dyn_q75v": 0.003593,
         "dyn_low_val_2": -1.13,
         "dyn_high_val_2": 0.1,
+    },
+    "Qwen3-8B": {
+        "dyn_q25c": 0.856617,
+        "dyn_q75c": 0.969286,
+        "dyn_low_val_1": -1.03,
+        "dyn_q25v": 6.3e-05,
+        "dyn_q75v": 0.001964,
+        "dyn_low_val_2": -1.13,
+        "dyn_high_val_2": 0.1,
     }
 }
 
